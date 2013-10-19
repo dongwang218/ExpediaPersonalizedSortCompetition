@@ -1,0 +1,124 @@
+cd /nobackup/workspace/commons-pants
+./pants py --pex src/python/my-lib:my-lib
+copy dist/my-lib.pex to production machine
+my-lib.pex any_python.py args
+
+cd /data/disk6/dong/setuptools-1.1.4
+mkdir -p /data/disk6/dong/lib/python2.7/site-packages/
+PYTHONPATH=/data/disk6/dong/lib/python2.7/site-packages:${PYTHONPATH} python2.7 setup.py install --prefix=/data/disk6/dong
+
+
+this won't work for numpy which is platform dependent, the packaged one has macosx in it. I used virtualenv directly on linux and install packages from source details in local_memo.txt
+
+cut -d',' -f54 data/train.csv | grep 1 | wc -l
+total click     443672
+total booking   276593
+total rows      9917530
+
+cut -d',' -f4,7,16,19,23,53 data/train.csv | grep -v NULL | less
+gross and price vs country vs num_night vs adult/child count vs num_room
+search_country, property_contry, price, num_night, num_room,gross
+
+# split into validation set
+cat ../data/train.csv | python split.py 0.8 ../data/split_train.csv ../data/split_test.csv
+
+# the whole train.csv ndcg
+cut -d',' -f1,52,54 ../data/train.csv | ruby -e 'while gets; a = chomp.split(","); score = a[2].to_i*5 + a[1].to_i; score = score > 5 ? 5 : score; puts "#{a[0]},#{score}"; end' | python calc_ndcg.py
+avg ndcg 0.349314, num srch 399346
+
+# train on split_train
+cat ../data/split_train.csv | python train.py ../Models/basicPythonBenchmark_split.pickle
+
+# predict on validation set
+./remove_training_only_col.sh ../data/split_test.csv | python predict.py ../Models/basicPythonBenchmark_split.pickle split_test_prediction.csv
+# merge prediction for ndcg
+paste -d"," <(cut -d',' -f1,8,52,54 ../data/split_test.csv) <(cat ../Submissions/split_test_prediction.csv) | python merge_click_book_prediction.py | python calc_ndcg.py
+../Models/basicPythonBenchmark_split.pickle
+avg ndcg 0.430597, num srch 79891
+
+# use position from the file
+cut -d',' -f1,8,15,52,54 ../data/split_test.csv | sort -t ',' -k1,1n -k3,3n | ruby -e 'while gets; a = chomp.split(","); score = a[4].to_i*5 + a[3].to_i; score = score > 5 ? 5 : score; puts "#{a[0]},#{score}"; end' | python calc_ndcg.py
+avg ndcg 0.497641, num srch 79891
+
+# to svm and try lr, not on real test data
+mod.sgd.binary.split_train
+cat ../data/split_train.csv  | python tosvm.py 5  | java  -cp ~/ml-deploy.jar -Xmx40g -Xms1024m com.twitter.ml.util.BinLinTrainEval --trn_file=/dev/stdin --disc_model=mod.binary.disc_split_train_two_ratio_affinity --disc_type=MDL
+  #train
+cat ../data/split_train.csv  | python tosvm.py 5 1 |  java  -cp ~/ml-deploy.jar -Xmx20g -Xms1024m com.twitter.ml.util.BinLinTrainEval \
+--disc_model=mod.binary.disc_split_train_two_ratio_affinity \
+--tst_field=1 \
+--disc_substitute \
+--disc_no_label \
+--test_file=/dev/stdin \
+--out_file=/dev/stdout | \
+sed -e 's/\t/ /' | \
+java  -cp ~/ml-deploy.jar -Xmx40g -Xms1024m com.twitter.ml.util.LRClassifierTrainEval --trn_file=/dev/stdin --model=mod.sgd.binary.split_train_two_ratio_affinity --decay=2 --lambda=0.001 --tune_delta --pegasos --num_iterations=1 --num_features=10427 --trainable_bias --shuffle --svmlight
+INFO: pos updates 1240173 negative updates 7582421
+  #test
+cat ../data/split_test.csv  | python tosvm.py 1 1 |  java  -cp ~/ml-deploy.jar -Xmx20g -Xms1024m com.twitter.ml.util.BinLinTrainEval \
+--disc_model=mod.binary.disc_split_train_two_ratio_affinity \
+--tst_field=1 \
+--disc_substitute \
+--disc_no_label \
+--test_file=/dev/stdin \
+--out_file=/dev/stdout | \
+sed -e 's/\t/ /' | \
+java  -cp ~/ml-deploy.jar -Xmx10g -Xms1024m com.twitter.ml.util.LRClassifierTrainEval --test_file=/dev/stdin --model=mod.sgd.binary.split_train_two_ratio_affinity --out_file=out.sgd.binary.split_train_two_ratio_affinity --roc_file=roc.sgd.binary.split_train_two_ratio_affinity --svmlight
+  # calculate ndcg
+paste -d"," <(tail -n+2 ../data/split_test.csv | cut -d',' -f1,52,54 ) <(cut -d$'\t' -f2 out.sgd.binary.split_train_two_ratio_affinity) | sort -t',' -k1,1n -k4,4nr | ruby -e 'while gets; a = chomp.split(","); score = a[2].to_i*5 + a[1].to_i; score = score > 5 ? 5 : score; puts "#{a[0]},#{score}"; end' | python calc_ndcg.py 1
+avg ndcg 0.441945, num srch 79891
+
+#data
+1. prop_log_historical_price: by log, srch_query_affinity_score is by log10 (so negative)
+2. price_usd maybe per day or whole stay
+3. comp variables https://www.kaggle.com/c/expedia-personalized-sort/forums/t/5690/questions-about-search-results. if rate==0 and diff=null then price is same; there are cases inv=-1, so expedia don't have hotel
+4. price_usd: has 3M, outliers
+5. random=1, so random hotel to help learning
+6. no customer id, so no collborative filtering
+7. null value reasons https://www.kaggle.com/c/expedia-personalized-sort/forums/t/5746/null
+
+# retry lr with add two ratio and affinity_score
+mod.sgd.binary.split_train_two_ratio_affinity
+avg ndcg 0.442928, num srch 79891
+  #predict on test
+cat ../data/test.csv  | python tosvm.py 1 1 test |  java  -cp ~/ml-deploy.jar -Xmx20g -Xms1024m com.twitter.ml.util.BinLinTrainEval \
+--disc_model=mod.binary.disc_split_train_two_ratio_affinity \
+--tst_field=1 \
+--disc_substitute \
+--disc_no_label \
+--test_file=/dev/stdin \
+--out_file=/dev/stdout | \
+sed -e 's/\t/ /' | \
+java  -cp ~/ml-deploy.jar -Xmx10g -Xms1024m com.twitter.ml.util.LRClassifierTrainEval --test_file=/dev/stdin --model=mod.sgd.binary.split_train_two_ratio_affinity --out_file=out.sgd.binary.split_train_two_ratio_affinity-test --roc_file=roc.sgd.binary.split_train_two_ratio_affinity-test --svmlight
+  # generate prediction
+echo "SearchId,PropertyId" > ../Submissions/lr_submission.csv
+paste -d"," <(tail -n+2 ../data/test.csv | cut -d',' -f1,8 ) <(cut -d$'\t' -f2 out.sgd.binary.split_train_two_ratio_affinity-test) | sort -t',' -k1,1n -k3,3nr | cut -d',' -f1,2 >> ../Submissions/lr_submission.csv
+
+got 0.41696, just beat the basic benchmark
+
+  # try elasticnet
+  #train
+time cat ../data/split_train.csv  | python tosvm.py 5 1 |  java  -cp ~/ml-deploy.jar -Xmx20g -Xms1024m com.twitter.ml.util.BinLinTrainEval \
+--disc_model=mod.binary.disc_split_train_two_ratio_affinity \
+--tst_field=1 \
+--disc_substitute \
+--disc_no_label \
+--test_file=/dev/stdin \
+--out_file=/dev/stdout | \
+sed -e 's/\t/ /' | \
+java  -cp ~/ml-deploy.jar -Xmx40g -Xms1024m com.twitter.ml.util.BinLinTrainEval --trn_file=/dev/stdin --en --model=mod.en.5.binary.split_train_two_ratio_affinity  --alpha=0.05  --cv_folds=5 --feature_cnt=10427
+INFO: Determined the best lambda to be 0.0021360341607545995, with cross-validated AUC of 0.6412565450363995
+take 30m
+  #test
+cat ../data/split_test.csv  | python tosvm.py 1 1 |  java  -cp ~/ml-deploy.jar -Xmx20g -Xms1024m com.twitter.ml.util.BinLinTrainEval \
+--disc_model=mod.binary.disc_split_train_two_ratio_affinity \
+--tst_field=1 \
+--disc_substitute \
+--disc_no_label \
+--test_file=/dev/stdin \
+--out_file=/dev/stdout | \
+sed -e 's/\t/ /' | \
+java  -cp ~/ml-deploy.jar -Xmx40g -Xms1024m com.twitter.ml.util.BinLinTrainEval --test_file=/dev/stdin --model=mod.en.5.binary.split_train_two_ratio_affinity --out_file=out.en.5.binary.split_train_two_ratio_affinity --roc_file=roc.en.5.binary.split_train_two_ratio_affinity
+  #ngcd
+paste -d"," <(tail -n+2 ../data/split_test.csv | cut -d',' -f1,52,54 ) <(cut -d$'\t' -f2 out.en.5.binary.split_train_two_ratio_affinity) | sort -t',' -k1,1n -k4,4nr | ruby -e 'while gets; a = chomp.split(","); score = a[2].to_i*5 + a[1].to_i; score = score > 5 ? 5 : score; puts "#{a[0]},#{score}"; end' | python calc_ndcg.py 1
+avg ndcg 0.426986, num srch 79891, it is worse. guess auc vs ngcd is not the same.

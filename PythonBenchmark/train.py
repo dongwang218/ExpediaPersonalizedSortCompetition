@@ -1,9 +1,15 @@
-import data_io
+import csv
+from operator import itemgetter
+import os
+import json
+import pickle
+import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
+import sys
 
 def main():
     print("Reading training data")
-    train = data_io.read_train()
+    train = pd.read_csv(sys.stdin)
     train.fillna(0, inplace=True)
 
     train_sample = train[:100000].fillna(value=0)
@@ -27,7 +33,7 @@ def main():
     classifier.fit(features, target)
     
     print("Saving the classifier")
-    data_io.save_model(classifier)
+    pickle.dump(classifier, open(sys.argv[1], "w"))
     
 if __name__=="__main__":
     main()
