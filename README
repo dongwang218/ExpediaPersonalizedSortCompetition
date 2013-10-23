@@ -1,14 +1,13 @@
-cd /nobackup/workspace/commons-pants
-./pants py --pex src/python/my-lib:my-lib
-copy dist/my-lib.pex to production machine
-my-lib.pex any_python.py args
-
-cd /data/disk6/dong/setuptools-1.1.4
-mkdir -p /data/disk6/dong/lib/python2.7/site-packages/
-PYTHONPATH=/data/disk6/dong/lib/python2.7/site-packages:${PYTHONPATH} python2.7 setup.py install --prefix=/data/disk6/dong
+hints:
+LambdaMART at 0.46, generating other features, add cross-features? 72nd
+11th place, use R with >16GB ram, feature engineering
+30th place: GBM, RF with feature engineering use regression instead of classification
+1st: in the sense of a single "gbm" model
 
 
-this won't work for numpy which is platform dependent, the packaged one has macosx in it. I used virtualenv directly on linux and install packages from source details in local_memo.txt
+******************************************************************
+basic benchmark
+******************************************************************
 
 cut -d',' -f54 data/train.csv | grep 1 | wc -l
 total click     443672
@@ -40,11 +39,15 @@ avg ndcg 0.430597, num srch 79891
 cut -d',' -f1,8,15,52,54 ../data/split_test.csv | sort -t ',' -k1,1n -k3,3n | ruby -e 'while gets; a = chomp.split(","); score = a[4].to_i*5 + a[3].to_i; score = score > 5 ? 5 : score; puts "#{a[0]},#{score}"; end' | python calc_ndcg.py
 avg ndcg 0.497641, num srch 79891
 
+******************************************************************
+lr models
+******************************************************************
+
 # to svm and try lr, not on real test data
 mod.sgd.binary.split_train
 cat ../data/split_train.csv  | python tosvm.py 5  | java  -cp ~/ml-deploy.jar -Xmx40g -Xms1024m com.twitter.ml.util.BinLinTrainEval --trn_file=/dev/stdin --disc_model=mod.binary.disc_split_train_two_ratio_affinity --disc_type=MDL
   #train
-cat ../data/split_train.csv  | python tosvm.py 5 1 |  java  -cp ~/ml-deploy.jar -Xmx20g -Xms1024m com.twitter.ml.util.BinLinTrainEval \
+cat ../data/split_train.csv  | python tosvm.py 5 1 train action |  java  -cp ~/ml-deploy.jar -Xmx20g -Xms1024m com.twitter.ml.util.BinLinTrainEval \
 --disc_model=mod.binary.disc_split_train_two_ratio_affinity \
 --tst_field=1 \
 --disc_substitute \
@@ -52,7 +55,7 @@ cat ../data/split_train.csv  | python tosvm.py 5 1 |  java  -cp ~/ml-deploy.jar 
 --test_file=/dev/stdin \
 --out_file=/dev/stdout | \
 sed -e 's/\t/ /' | \
-java  -cp ~/ml-deploy.jar -Xmx40g -Xms1024m com.twitter.ml.util.LRClassifierTrainEval --trn_file=/dev/stdin --model=mod.sgd.binary.split_train_two_ratio_affinity --decay=2 --lambda=0.001 --tune_delta --pegasos --num_iterations=1 --num_features=10427 --trainable_bias --shuffle --svmlight
+java  -cp ~/ml-deploy.jar -Xmx40g -Xms1024m com.twitter.ml.util.LRClassifierTrainEval --trn_file=/dev/stdin --model=mod.sgd.binary.split_train_two_ratio_affinity-action --decay=2 --lambda=0.001 --tune_delta --pegasos --num_iterations=1 --num_features=10427 --trainable_bias --shuffle --svmlight
 INFO: pos updates 1240173 negative updates 7582421
   #test
 cat ../data/split_test.csv  | python tosvm.py 1 1 |  java  -cp ~/ml-deploy.jar -Xmx20g -Xms1024m com.twitter.ml.util.BinLinTrainEval \
@@ -122,3 +125,157 @@ java  -cp ~/ml-deploy.jar -Xmx40g -Xms1024m com.twitter.ml.util.BinLinTrainEval 
   #ngcd
 paste -d"," <(tail -n+2 ../data/split_test.csv | cut -d',' -f1,52,54 ) <(cut -d$'\t' -f2 out.en.5.binary.split_train_two_ratio_affinity) | sort -t',' -k1,1n -k4,4nr | ruby -e 'while gets; a = chomp.split(","); score = a[2].to_i*5 + a[1].to_i; score = score > 5 ? 5 : score; puts "#{a[0]},#{score}"; end' | python calc_ndcg.py 1
 avg ndcg 0.426986, num srch 79891, it is worse. guess auc vs ngcd is not the same.
+
+git commit 40248285a82d475bc9ff2c67d3e2562e67f3999b
+
+# get rid of search that did no book/click at all in tosmv
+only during train, use python tosvm.py 5 1 train action
+INFO: pos updates 1240173 negative updates 7582421
+so no help, every search has at least one
+
+******************************************************************
+compute historical click and book rate
+******************************************************************
+# unique prop
+cut -d',' -f8 ../data/split_train.csv | sort -n | uniq -c | sort -nrk1,1 | sed -e 's/^\s*//;s/ /,/' > ../data/unique_split_train_prop_id.txt
+134713
+
+# uniqe test
+
+# how many prop in test appears in training
+pig -x local -p schemaone="cnt:int, prop_id:int" -p schematwo="cnt:int, prop_id: int" -p sep="," -p keyone=prop_id -p keytwo=prop_id -p fileone="../data/unique_train_prop_id.txt" -p filetwo="../data/unique_test_prop_id.txt" join_two_files.pig 
+128953 out of 132889 in train
+
+tail -n+2 ../data/split_train.csv | cut -d',' -f8,52,54 | ruby -e 'impression = Hash.new { |hash, key| hash[key] = 0 }; click =  Hash.new { |hash, key| hash[key] = 0 }; book =  Hash.new { |hash, key| hash[key] = 0 }; while gets; a = chomp.split(","); id = a[0].to_i; impression[id] += 1; c = a[1].to_i; b = a[2].to_i; click[id] += [c, b].max; book[id] += b; end; impression.keys.sort.each { |k| puts "#{k},#{impression[k]},#{click[k]},#{book[k]}" };' > ../data/split_train-prop_historical.csv
+
+smooth alpha=0.05, beta=10
+avg click rate =0.0447 , book rate = 0.0279
+
+remove the prop_id from data
+head -1000000 ../data/split_train.csv  | python tosvm.py 5 0 train action ../data/split_train-prop_historical.csv  | java  -cp ~/ml-deploy.jar -Xmx40g -Xms1024m com.twitter.ml.util.BinLinTrainEval --trn_file=/dev/stdin --disc_model=mod.binary.disc_split_train_two_ratio_affinity_historical --disc_type=MDL
+#train
+head -1000000 ../data/split_train.csv  | python tosvm.py 5 1 train action ../data/split_train-prop_historical.csv |  java  -cp ~/ml-deploy.jar -Xmx20g -Xms1024m com.twitter.ml.util.BinLinTrainEval \
+--disc_model=mod.binary.disc_split_train_two_ratio_affinity_historical \
+--tst_field=1 \
+--disc_substitute \
+--disc_no_label \
+--test_file=/dev/stdin \
+--out_file=/dev/stdout | \
+sed -e 's/\t/ /' | \
+java  -cp ~/ml-deploy.jar -Xmx40g -Xms1024m com.twitter.ml.util.LRClassifierTrainEval --trn_file=/dev/stdin --model=mod.sgd.binary.split_train_two_ratio_affinity-action_historical --decay=2 --lambda=0.001 --tune_delta --pegasos --num_iterations=1 --num_features=630 --trainable_bias --shuffle --svmlight
+#testing
+cat ../data/split_test.csv  | python tosvm.py 1 1 train action ../data/split_train-prop_historical.csv |  java  -cp ~/ml-deploy.jar -Xmx20g -Xms1024m com.twitter.ml.util.BinLinTrainEval \
+--disc_model=mod.binary.disc_split_train_two_ratio_affinity_historical \
+--tst_field=1 \
+--disc_substitute \
+--disc_no_label \
+--test_file=/dev/stdin \
+--out_file=/dev/stdout | \
+sed -e 's/\t/ /' | \
+java  -cp ~/ml-deploy.jar -Xmx10g -Xms1024m com.twitter.ml.util.LRClassifierTrainEval --test_file=/dev/stdin --model=mod.sgd.binary.split_train_two_ratio_affinity-action_historical --out_file=out.sgd.binary.split_train_two_ratio_affinity-action_historical --roc_file=roc.sgd.binary.split_train_two_ratio_affinity-action_historical --svmlight
+      AUC 0.683400
+  # calculate ndcg
+paste -d"," <(tail -n+2 ../data/split_test.csv | cut -d',' -f1,52,54 ) <(cut -d$'\t' -f2 out.sgd.binary.split_train_two_ratio_affinity-action_historical) | sort -t',' -k1,1n -k4,4nr | ruby -e 'while gets; a = chomp.split(","); score = a[2].to_i*5 + a[1].to_i; score = score > 5 ? 5 : score; puts "#{a[0]},#{score}"; end' | python calc_ndcg.py 1
+avg ndcg 0.474143, num srch 79891
+ # submission
+cat ../data/test.csv  | python tosvm.py 1 1 test noaction ../data/split_train-prop_historical.csv |  java  -cp ~/ml-deploy.jar -Xmx20g -Xms1024m com.twitter.ml.util.BinLinTrainEval \
+--disc_model=mod.binary.disc_split_train_two_ratio_affinity_historical \
+--tst_field=1 \
+--disc_substitute \
+--disc_no_label \
+--test_file=/dev/stdin \
+--out_file=/dev/stdout | \
+sed -e 's/\t/ /' | \
+java  -cp ~/ml-deploy.jar -Xmx10g -Xms1024m com.twitter.ml.util.LRClassifierTrainEval --test_file=/dev/stdin --model=mod.sgd.binary.split_train_two_ratio_affinity-action_historical --out_file=out.sgd.binary.split_train_two_ratio_affinity-action_historical-test --roc_file=roc.sgd.binary.split_train_two_ratio_affinity-action_historical-test --svmlight
+  # generate prediction
+echo "SearchId,PropertyId" > ../Submissions/lr-historical_submission.csv
+paste -d"," <(tail -n+2 ../data/test.csv | cut -d',' -f1,8 ) <(cut -d$'\t' -f2 out.sgd.binary.split_train_two_ratio_affinity-action_historical-test) | sort -t',' -k1,1n -k3,3nr | cut -d',' -f1,2 >> ../Submissions/lr-historical_submission.csv
+ got 0.47333 on leaderboard. matches validation very well
+  so convert ids into historical data helps.
+
+question: seems might want to set num_features= feature+1 to be on the safe side
+
+I realized that tosmv.py is wrong due to position is missing from test, so the feature id afterwards is one less than from the training, it affects the submission results, but not before it. Damn it!
+
+***********************
+do we have one search that return different prop_country_id?
+*************************
+add a indicator whether srch and destination country the same.
+
+***************************
+do prop_id has different performance dependending on time of year?
+***************************
+let us break local date into 12 month and collect propxmonth, then add one feature valued as the historical month performance.
+
+***************************
+does prop_id correlated with children?
+**************************
+if it does, then collect ctr for each hotel x with/without children, and add a feature that depends on whether input has children or not, use a different historical pctr.
+
+********************************
+does prop performance correlated with site_id?
+*******************************
+
+********************
+how ctr per rating or review?
+*********************
+tail -n+2 ../data/split_train.csv | cut -d',' -f10,52,54 | ruby -e 'impression = Hash.new { |hash, key| hash[key] = 0 }; click =  Hash.new { |hash, key| hash[key] = 0 }; book =  Hash.new { |hash, key| hash[key] = 0 }; while gets; a = chomp.split(","); id = a[0].to_i; impression[id] += 1; c = a[1].to_i; b = a[2].to_i; click[id] += [c, b].max; book[id] += b; end; impression.keys.sort.each { |k| puts "#{k},#{impression[k]},#{click[k]},#{book[k]}" };' > ../data/split_train-prop_historical.csv
+
+***********************
+srch_destination_id
+***********************
+many unique ids
+
+# random has something to do vs book
+
+
+***********************************************
+ranklib
+**********************************************
+3 qid:1 1:1 2:1 3:0 4:0.2 5:0 # 1A
+
+
+**************************
+gbm
+***************************
+  * head -1000000 ../data/split_train.csv  | python tosvm.py 1 0 train action ../data/split_train-prop_historical.csv regression > ../data/split_train.svm
+  * python gbm_svm.py train ../data/split_train.svm ../Models/gbm-svm
+           MAE: 0.158338
+           real    179m6.139s
+  * cat ../data/split_test.csv  | python tosvm.py 1 0 train action ../data/split_train-prop_historical.csv regression > ../data/split_test.svm
+  * python gbm_svm.py test ../data/split_test.svm ../Models/gbm-svm ls ../data/split_test-gbm_pred
+           MAE: 0.160790
+  * paste -d"," <(tail -n+2 ../data/split_test.csv | cut -d',' -f1,52,54 ) <(cat ../data/split_test-gbm_pred) | sort -t',' -k1,1n -k4,4nr | ruby -e 'while gets; a = chomp.split(","); score = a[2].to_i*5 + a[1].to_i; score = score > 5 ? 5 : score; puts "#{a[0]},#{score}"; end' | python calc_ndcg.py 1
+          avg ndcg 0.351694, num srch 79891,
+          for training MAE: 0.158338
+          training avg ndcg 0.405736, num srch 40167
+  * cat ../data/test.csv  | python tosvm.py 1 0 test noaction ../data/split_train-prop_historical.csv regression > ../data/test.svm
+  * python gbm_svm.py test ../data/test.svm ../Models/gbm-svm ls ../data/test-gbm_pred
+  * echo "SearchId,PropertyId" > ../Submissions/gbm-historical_submission.csv
+    paste -d"," <(tail -n+2 ../data/test.csv | cut -d',' -f1,8 ) <(cat ../data/test-gbm_pred) | sort -t',' -k1,1n -k3,3nr | cut -d',' -f1,2 >> ../Submissions/gbm-historical_submission.csv
+
+so lad loss function is not good for ndcg
+take 10k lines to be ../data/split_train_sample.svm
+  * python gbm_svm.py train ../data/split_train_sample.svm ../Models/gbm-sample-ls ls
+    MSE: 0.615012
+  * python gbm_svm.py test ../data/split_test.svm ../Models/gbm-sample-ls ls ../data/split_test-gbm-sample-ls_pred
+    MSE: 0.693167
+    avg ndcg 0.462757, num srch 79891
+
+let us try classification:
+  * head -100000 ../data/split_train.csv  | python tosvm.py 5 0 train action ../data/split_train-prop_historical.csv classification > ../data/split_train_sample-binary.svm
+  * python gbm_svm.py train ../data/split_train_sample-binary.svm ../Models/gbm-sample-deviance deviance
+           AUC: 0.634818
+  * python gbm_svm.py test ../data/split_test.svm ../Models/gbm-sample-deviance deviance ../data/split_test-gbm-sample-deviance_pred 
+           AUC: 0.602650
+  * paste -d"," <(tail -n+2 ../data/split_test.csv | cut -d',' -f1,52,54 ) <(cat ../data/split_test-gbm-sample-deviance_pred) | sort -t',' -k1,1n -k4,4nr | ruby -e 'while gets; a = chomp.split(","); score = a[2].to_i*5 + a[1].to_i; score = score > 5 ? 5 : score; puts "#{a[0]},#{score}"; end' | python calc_ndcg.py 1
+    avg ndcg 0.457551, num srch 79891
+
+question: how gbm deals with missing values?
+
+next is to add more expetation features:
+# convert all categoriy into expected
+# convert all contiguous using the disretization model, then expected
+# write out csv with NA
+# so that we can try gbm
+discretize.py
