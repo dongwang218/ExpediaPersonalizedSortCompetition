@@ -278,4 +278,4 @@ next is to add more expetation features:
 # convert all contiguous using the disretization model, then expected
 # write out csv with NA
 # so that we can try gbm
-discretize.py
+discretize.R
