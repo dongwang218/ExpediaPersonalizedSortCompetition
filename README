@@ -279,3 +279,5 @@ next is to add more expetation features:
 # write out csv with NA
 # so that we can try gbm
 discretize.R
+train on 100k examples, and evaluate on 1m get 0.5096955, but submission get 0.47724. question is should we train on more instances? should we add back the raw features?
+  * let us try on 1m, limit num of tree to 3000.

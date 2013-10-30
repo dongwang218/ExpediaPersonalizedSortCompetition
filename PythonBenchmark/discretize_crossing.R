@@ -183,8 +183,29 @@ data$comp8_inv_exp <- my_exp1(data, "comp8_inv", "score", data$score >= 0, 10, p
 data$comp8_rate_percent_diff_dist <- my_dist(data, "comp8_rate_percent_diff")
 data$comp8_rate_percent_diff_exp <- my_exp1(data, "comp8_rate_percent_diff_dist", "score", data$score >= 0, 10, prior)
 
+# total num of rate, inv
+data$num_comp_rate <- ifelse(is.na(data$comp1_rate), 0, data$comp1_rate) + 
+                      ifelse(is.na(data$comp2_rate), 0, data$comp2_rate) + 
+                      ifelse(is.na(data$comp3_rate), 0, data$comp3_rate) + 
+                      ifelse(is.na(data$comp4_rate), 0, data$comp4_rate) + 
+                      ifelse(is.na(data$comp5_rate), 0, data$comp5_rate) + 
+                      ifelse(is.na(data$comp6_rate), 0, data$comp6_rate) + 
+                      ifelse(is.na(data$comp7_rate), 0, data$comp7_rate) + 
+                      ifelse(is.na(data$comp8_rate), 0, data$comp8_rate)
+data$num_comp_inv <- ifelse(is.na(data$comp1_inv), 0, data$comp1_inv) + 
+                      ifelse(is.na(data$comp2_inv), 0, data$comp2_inv) + 
+                      ifelse(is.na(data$comp3_inv), 0, data$comp3_inv) + 
+                      ifelse(is.na(data$comp4_inv), 0, data$comp4_inv) + 
+                      ifelse(is.na(data$comp5_inv), 0, data$comp5_inv) + 
+                      ifelse(is.na(data$comp6_inv), 0, data$comp6_inv) + 
+                      ifelse(is.na(data$comp7_inv), 0, data$comp7_inv) + 
+                      ifelse(is.na(data$comp8_inv), 0, data$comp8_inv)
+data$num_comp_rate <- ifelse(data$num_comp_rate == 0, NA, data$num_comp_rate)
+data$num_comp_inv <- ifelse(data$num_comp_inv == 0, NA, data$num_comp_inv)
+data$num_comp_rate_exp <- my_exp1(data, "num_comp_rate", "score", data$score >= 0, 10, prior)
+data$num_comp_inv_exp <- my_exp1(data, "num_comp_inv", "score", data$score >= 0, 10, prior)
+
 # cross features
-if (FALSE) {
 data$prop_id_date_time_exp <- my_exp2(data, "date_time_dist", "prop_id", "score", data$score >= 0, 10, prior)
 data$prop_id_srch_children_count_exp <- my_exp2(data, "prop_id", "srch_children_count", "score", data$score >= 0, 10, prior)
 data$prop_id_vistor_location_country_id_exp <- my_exp2(data, "prop_id", "visitor_location_country_id", "score", data$score >= 0, 10, prior)
@@ -192,6 +213,8 @@ data$prop_id_visitor_hist_starrating_exp <- my_exp2(data, "prop_id", "visitor_hi
 data$prop_id_visitor_hist_adr_usd_exp <- my_exp2(data, "prop_id", "visitor_hist_adr_usd_dist", "score", data$score >= 0, 10, prior)
 data$prop_id_srch_length_of_stay_exp <- my_exp2(data, "prop_id", "srch_length_of_stay", "score", data$score >= 0, 10, prior)
 data$prop_id_promotion_flag_exp <- my_exp2(data, "prop_id", "promotion_flag", "score", data$score >= 0, 10, prior)
+data$prop_id_srch_destination_id_exp <- my_exp2(data, "prop_id", "srch_destination_id", "score", data$score >= 0, 10, prior)
+
 data$visitor_hist_starrating_promotion_flag_exp <- my_exp2(data, "visitor_hist_starrating_dist", "promotion_flag", "score", data$score >= 0, 10, prior)
 
 # compute avg of comp rate, inv, percent_diff
@@ -200,41 +223,38 @@ data$prop_starrating_visitor_hist_starrating_exp <- my_exp2(data, "prop_starrati
 
 data$prop_log_historical_price_visitor_hist_adr_usd_exp <- my_exp2(data, "prop_log_historical_price_dist", "visitor_hist_adr_usd_dist", "score", data$score >= 0, 10, prior)
 data$price_usd_visitor_hist_adr_usd_exp <- my_exp2(data, "price_usd_dist", "visitor_hist_adr_usd_dist", "score", data$score >= 0, 10, prior)
+data$num_comp_rate_visitor_hist_adr_usd_exp <- my_exp2(data, "num_comp_rate", "visitor_hist_adr_usd_dist", "score", data$score >= 0, 10, prior)
 
 data$prop_review_score_prop_location_score1_exp <- my_exp2(data, "prop_review_score", "prop_location_score1_dist", "score", data$score >= 0, 10, prior)
-}
-save(data, file = "../data/train_test_disc.RData")
-#write.csv(data, "../data/train_test_disc.csv")
+
+
+save(data, file = "../data/train_test_disc_crossing.RData")
 
 exp_names = names(data)[grep(".*(prop_brand_bool|srch_saturday_night_bool|_exp)$", names(data))]
 gbm_formula <- paste("score ~", paste(exp_names, collapse="+"))
 
 real_train <- data[data$score >= 0, ]
-train_sample <- real_train[1:min(dim(real_train)[1], 200000), ]
+train_sample <- real_train[1:min(dim(real_train)[1], 4000000), ]
 gbm.ndcg <- gbm(as.formula(gbm_formula), data=train_sample, train.fraction=0.5, n.trees=10000, interaction.depth=8, n.minobsinnode=20, shrinkage=0.005, bag.fraction=0.5, verbose=TRUE, cv.folds=0, keep.data=TRUE, n.cores=16, distribution=list(name="pairwise", metric="ndcg", max.rank=38, group="srch_id"))
 
 best.iter.ndcg <- gbm.perf(gbm.ndcg, method='test')
 title('Training of pairwise model with ndcg metric')
 
 summary(gbm.ndcg, n.trees=best.iter.ndcg, main='pairwise (ndcg)')
+save(gbm.ndcg, file="../Models/gbm.ndcg.exp.crossing.RData")
 
 # generate prediction for test
 
-total <- dim(real_train)[1]
-test2 <- data[total-1000000:total, ]
-predict.ndcg2 <- predict(gbm.ndcg, test2, best.iter.ndcg)
-my_ndcg(test2$score, test2$srch_id, -predict.ndcg2, 38)
-# 0.5111782
-# 0.5096955
 
+total <- dim(real_train)[1]
+test <- data[total-1000000:total, ]
+predict.ndcg <- predict(gbm.ndcg, test, best.iter.ndcg)
+my_ndcg(test$score, test$srch_id, -predict.ndcg, 38)
 
 test <- data[data$score < 0, ]
 predict.ndcg <- predict(gbm.ndcg, test, best.iter.ndcg)
-submission <- data.frame("srch_id" = test$srch_id, "prop_id" = test$prop_id, "pred" = predict.ndcg)
-submission <- submission[with(submission, order(srch_id, -pred)), ]
-submission <- subset(submission, select = -c(pred))
-names(submission) <- c("SearchId","PropertyId")
-write.table(submission, "../Submissions/submssision_gbm.ndcg.exp.no_cross.csv", sep = ",", row.names=FALSE, quote=FALSE)
 
-save(gbm.ndcg, file="../Models/gbm.ndcg.exp.no_cross.RData")
+submission <- data.frame("src_id" = test$srch_id, "prop_id" = test$prop_id, "pred" = predict.ndcg)
+write.csv(submission, "../Submissions/submssision_gbm.ndcg.exp.crossing.csv")
+
 #ndcg38.loss <- gbm.loss(y=test$score, predict.ndcg, w=rep(1,dim(test)[1]), offset=NA, dist=list(name='pairwise', metric="ndcg"),                                  baseline=0, group=test$srch_id, max.rank=38)
