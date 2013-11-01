@@ -279,5 +279,48 @@ next is to add more expetation features:
 # write out csv with NA
 # so that we can try gbm
 discretize.R
-train on 100k examples, and evaluate on 1m get 0.5096955, but submission get 0.47724. question is should we train on more instances? should we add back the raw features?
+train on 100k examples, and evaluate on 1m get 0.5096955, but submission get leaderboard 0.47724. question is should we train on more instances? should we add back the raw features?
   * let us try on 1m, limit num of tree to 3000.
+discretize_crossing.R
+  train on 2m examples, evaluate on 1m get 0.9085294, but leaderboard is 0.40793
+I think the issue is overfiting, basically the features are too sparse. these are the important features
+  prop_id_date_time_exp                              9.791166e+01
+prop_id_srch_destination_id_exp                    1.845871e+00
+prop_id_visitor_hist_adr_usd_exp                   1.836176e-01
+prop_id_exp                                        2.311953e-02
+prop_id_vistor_location_country_id_exp             1.570928e-02
+prop_id_srch_length_of_stay_exp                    8.124020e-03
+srch_destination_id_exp                            3.851776e-03
+price_usd_exp                                      2.617579e-03
+prop_id_srch_children_count_exp                    2.310830e-03
+prop_location_score2_exp                           2.294709e-03
+srch_length_of_stay_exp                            7.197387e-04
+prop_id_visitor_hist_starrating_exp                3.649013e-05
+comp8_rate_exp                                     1.774974e-05
+srch_room_count_exp                                1.511912e-05
+prop_log_historical_price_exp                      1.270142e-05
+srch_booking_window_exp                            9.333579e-06
+comp2_inv_exp                                      6.670252e-06
+date_time_exp                                      5.993346e-06
+let us count num of NAs
+prop_id_date_time_exp                   2765527
+prop_id_srch_destination_id_exp         217002
+prop_id_visitor_hist_adr_usd_exp        15962053
+prop_id_vistor_location_country_id_exp  367687
+prop_id_srch_length_of_stay_exp         169627
+prop_id_srch_children_count_exp         54728
+prop_id_visitor_hist_starrating_exp     15909263
+
+one problem the prior for prop_id_date_time_exp is prop_id_exp * date_time_exp/prior. the other is num of NAs is too small. It can fit the data good, because I know for this prop at that day, the avg. when it is too small, either leave it as NA, or smooth it. 1. check the cnt of prop and date, 2 check why test don't have NAs. 3. the other mistake is we use all train to compute these metrics, that is why the validation and test are quite different.
+
+must be principled in validation and test. So the expectation must not include test data. data is:
+1. submission test  split == 3
+2. test     split == 2  1m
+3. can use  split == 0  6m the smaller this, the better the generalization
+3. validate split == 1  1m
+4. train    split == 0  1m
+
+leave one out, randomized expectation in amazon
+avg exp: 0.94, randomize is 0.2, 47 times. turns all NA into prior
+
+try gbm_basic.R, just the given features. 1m train, 3000 tree, test 1m get  0.4921711, leaderboard 0.49635, so I will train on more examples and run more trees.

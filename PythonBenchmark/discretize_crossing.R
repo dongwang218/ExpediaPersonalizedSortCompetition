@@ -235,7 +235,7 @@ gbm_formula <- paste("score ~", paste(exp_names, collapse="+"))
 
 real_train <- data[data$score >= 0, ]
 train_sample <- real_train[1:min(dim(real_train)[1], 4000000), ]
-gbm.ndcg <- gbm(as.formula(gbm_formula), data=train_sample, train.fraction=0.5, n.trees=10000, interaction.depth=8, n.minobsinnode=20, shrinkage=0.005, bag.fraction=0.5, verbose=TRUE, cv.folds=0, keep.data=TRUE, n.cores=16, distribution=list(name="pairwise", metric="ndcg", max.rank=38, group="srch_id"))
+gbm.ndcg <- gbm(as.formula(gbm_formula), data=train_sample, train.fraction=0.5, n.trees=500, interaction.depth=8, n.minobsinnode=20, shrinkage=0.01, bag.fraction=0.5, verbose=TRUE, cv.folds=0, keep.data=TRUE, n.cores=16, distribution=list(name="pairwise", metric="ndcg", max.rank=38, group="srch_id"))
 
 best.iter.ndcg <- gbm.perf(gbm.ndcg, method='test')
 title('Training of pairwise model with ndcg metric')
@@ -250,11 +250,14 @@ total <- dim(real_train)[1]
 test <- data[total-1000000:total, ]
 predict.ndcg <- predict(gbm.ndcg, test, best.iter.ndcg)
 my_ndcg(test$score, test$srch_id, -predict.ndcg, 38)
+# 0.9085294 too good to be true
 
 test <- data[data$score < 0, ]
 predict.ndcg <- predict(gbm.ndcg, test, best.iter.ndcg)
-
-submission <- data.frame("src_id" = test$srch_id, "prop_id" = test$prop_id, "pred" = predict.ndcg)
-write.csv(submission, "../Submissions/submssision_gbm.ndcg.exp.crossing.csv")
+submission <- data.frame("srch_id" = test$srch_id, "prop_id" = test$prop_id, "pred" = predict.ndcg)
+submission <- submission[with(submission, order(srch_id, -pred)), ]
+submission <- subset(submission, select = -c(pred))
+names(submission) <- c("SearchId","PropertyId")
+write.table(submission, "../Submissions/submssision_gbm.ndcg.exp.crossing.csv", sep = ",", row.names=FALSE, quote=FALSE)
 
 #ndcg38.loss <- gbm.loss(y=test$score, predict.ndcg, w=rep(1,dim(test)[1]), offset=NA, dist=list(name='pairwise', metric="ndcg"),                                  baseline=0, group=test$srch_id, max.rank=38)
