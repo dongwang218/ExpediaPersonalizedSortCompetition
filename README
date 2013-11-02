@@ -323,4 +323,49 @@ must be principled in validation and test. So the expectation must not include t
 leave one out, randomized expectation in amazon
 avg exp: 0.94, randomize is 0.2, 47 times. turns all NA into prior
 
-try gbm_basic.R, just the given features. 1m train, 3000 tree, test 1m get  0.4921711, leaderboard 0.49635, so I will train on more examples and run more trees.
+try gbm_basic.R, just the given features. 1m train, 3000 tree, test 1m get  0.4921711, leaderboard 0.49635, so I will train on more examples and run more trees. run 3 things
+  * 1m discretize.R, test 1m get 0.4945602, leaderboard 0.49498 submssision_gbm.ndcg.exp.no_cross.0.49498.with_prediction.csv. gbm.ndcg.exp.no_cross.0.49498.1m.all_prediction.Rdata
+  * heavy weight gbm_basic.R 4m, 10k tree, 1800 5:10, 1820 5:20 1900 6:02
+  * 1m gbm_basic.R test 1m get  0.4921711, leaderboard 0.49635 submssision_gbm.basic.0.49635.csv
+  * heavy weight discretize 4m, 10k tree, too slow killed
+  * heavy weight basic + only prop_id_exp + srch_destination_id_exp to avoid overfitting discretize_simple.R, 5:08 1460, 1480 5:20, 1560 6:02
+  * remove random_flag
+
+
+rerun lr taking all data, try batch mode.
+#train
+cat ../data/split_train.csv  | python tosvm.py 5 1 train action ../data/split_train-prop_historical.csv |  java  -cp ~/ml-deploy.jar -Xmx20g -Xms1024m com.twitter.ml.util.BinLinTrainEval \
+--disc_model=mod.binary.disc_split_train_two_ratio_affinity_historical \
+--tst_field=1 \
+--disc_substitute \
+--disc_no_label \
+--test_file=/dev/stdin \
+--out_file=/dev/stdout | \
+sed -e 's/\t/ /' | \
+ java -cp ~/ml-deploy.jar -Xmx100g -Xms1024m com.twitter.ml.util.BinLinTrainEval --trn_file=/dev/stdin --model=model.l2_batch_1000_40 --sigma_squared=1000 --num_iterations=40
+#test
+cat ../data/split_test.csv  | python tosvm.py 1 1 train action ../data/split_train-prop_historical.csv |  java  -cp ~/ml-deploy.jar -Xmx20g -Xms1024m com.twitter.ml.util.BinLinTrainEval \
+--disc_model=mod.binary.disc_split_train_two_ratio_affinity_historical \
+--tst_field=1 \
+--disc_substitute \
+--disc_no_label \
+--test_file=/dev/stdin \
+--out_file=/dev/stdout | \
+sed -e 's/\t/ /' |
+java -cp ~/ml-deploy.jar com.twitter.ml.util.BinLinTrainEval --test_file=/dev/stdin --out_file=out.l2_batch_1000_40 --model=model.l2_batch_1000_40 --roc_file=roc.l2_batch_1000_40
+AUC :  0.684454
+avg ndcg 0.478114, num srch 79891
+# produce prediction for every one
+try 1k iterations
+
+
+try svdfeature
+
+try gbm to train a combined model. so we need to score training data to train this model.
+
+# generate predictions for avaiable data with split
+predict.data <- predict(gbm.ndcg, data, best.iter.ndcg)
+data_p <- data.frame("srch_id" = data$srch_id, "prop_id" = data$prop_id, "split" = data$split, "pred" = predict.data)
+save(data_p, file="../data/gbm.ndcg.exp.no_cross.0.49498.1m.all_prediction.RData")
+
+what if we drop combination features that less than a threshold, but get rid of the randomization. drop random_flag, make date_time into weekly. try 1m feature

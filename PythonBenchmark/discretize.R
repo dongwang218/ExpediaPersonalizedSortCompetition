@@ -1,14 +1,14 @@
 source('gbm_utils.R')
 
-offset <- 1000000
-num_train <- num_validate <- 1000000
+offset <- 1
+num_train <- num_validate <- 4000000
 num_test <- 1000000
-num_stats <- 4000000
+num_stats <- 917530
 num_submission <- 6622629 #min(0, 6622629)
 # 10 to 40
 prior_cnt <- max(10, min(60, as.integer((num_train+num_stats) / 2000000 * 60)))
 
-read_train <- min(9917530, offset+num_train+num_validate+num_test+num_stats)
+read_train <- min(9917530, offset-1+num_train+num_validate+num_test+num_stats)
 read_test <- max(1, num_submission)
 
 train <- read.csv('../data/train.csv', na.string = "NULL", nrows=read_train)
@@ -176,7 +176,7 @@ data$num_comp_rate_visitor_hist_adr_usd_exp <- my_exp2(data, "num_comp_rate", "v
 
 data$prop_review_score_prop_location_score1_exp <- my_exp2(data, "prop_review_score", "prop_location_score1_dist", "score", data$split < 3, prior_cnt, prior)
 }
-save(data, file = "../data/train_test_disc.RData")
+save(data, file = "../data/train_test_disc_crossings.RData")
 
 #exp_names = names(data)[grep(".*(prop_brand_bool|srch_saturday_night_bool|_exp)$", names(data))]
 exp_names = names(data)[grep(".*_exp$", names(data))]
@@ -184,13 +184,13 @@ gbm_formula <- paste("score ~ date_time_dist+site_id+visitor_location_country_id
 
 train_sample <- data[(data$split==1) | (data$split==3), ]
 
-gbm.ndcg <- gbm(as.formula(gbm_formula), data=train_sample, train.fraction=0.5, n.trees=3000, interaction.depth=8, n.minobsinnode=20, shrinkage=0.005, bag.fraction=0.5, verbose=TRUE, cv.folds=0, keep.data=TRUE, n.cores=16, distribution=list(name="pairwise", metric="ndcg", max.rank=38, group="srch_id"))
+gbm.ndcg <- gbm(as.formula(gbm_formula), data=train_sample, train.fraction=0.5, n.trees=10000, interaction.depth=8, n.minobsinnode=20, shrinkage=0.005, bag.fraction=0.5, verbose=TRUE, cv.folds=0, keep.data=TRUE, n.cores=16, distribution=list(name="pairwise", metric="ndcg", max.rank=38, group="srch_id"))
 
 best.iter.ndcg <- gbm.perf(gbm.ndcg, method='test')
 title('Training of pairwise model with ndcg metric')
 
 summary(gbm.ndcg, n.trees=best.iter.ndcg, main='pairwise (ndcg)')
-save(gbm.ndcg, file="../Models/gbm.ndcg.exp.no_cross.RData")
+save(gbm.ndcg, file="../Models/gbm.ndcg.exp.no_cross.heavy.RData")
 
 # generate prediction for test
 test <- data[data$split == 4, ]
@@ -202,7 +202,7 @@ submission <- data[data$split == 5, ]
 predict.submission <- predict(gbm.ndcg, submission, best.iter.ndcg)
 submission_p <- data.frame("srch_id" = submission$srch_id, "prop_id" = submission$prop_id, "pred" = predict.submission)
 submission_p <- submission_p[with(submission_p, order(srch_id, -pred)), ]
-submission_p <- subset(submission_p, select = -c(pred))
-names(submission_p) <- c("SearchId","PropertyId")
-write.table(submission_p, "../Submissions/submssision_gbm.ndcg.exp.no_cross.csv", sep = ",", row.names=FALSE, quote=FALSE)
+#submission_p <- subset(submission_p, select = -c(pred))
+names(submission_p) <- c("SearchId","PropertyId","Prediction")
+write.table(submission_p, "../Submissions/submssision_gbm.ndcg.exp.no_cross.heavy.csv", sep = ",", row.names=FALSE, quote=FALSE)
 }
