@@ -12,6 +12,7 @@ is_test = sys.argv[3] == 'test' if len(sys.argv) > 3 else False
 only_action = sys.argv[4] == 'action' if len(sys.argv) > 4 else False
 historical = sys.argv[5] if len(sys.argv) > 5 else ""
 regression = sys.argv[6] == 'regression' if len(sys.argv) > 6 else False
+has_srch_id = sys.argv[7] == 'srch_id' if len(sys.argv) > 7 else False
 
 features_map = train_features_map if not is_test else test_features_map
 
@@ -28,6 +29,7 @@ click_col = features_map.get("click_bool", 0) # 51
 book_col = features_map.get("booking_bool", 0) # 53
 affinity_col = features_map.get("srch_query_affinity_score", 0) # 25
 prop_id_col = features_map.get("prop_id", 0) # 8
+srch_id_col = features_map.get("srch_id", 0)
 
 sep = '\t' if add_tab else ' '
 
@@ -102,7 +104,10 @@ def emit_line(line):
             target = 0
     else:
         target = 1 if (not is_test) and (line[book_col-1] == '1' or line[click_col-1] == '1') else -1
-    row = "%d%s%s\n" % (target, sep, svml)
+    if not has_srch_id:
+        row = "%d%s%s\n" % (target, sep, svml)
+    else:
+        row = "%d%s%s%s%s\n" % (target, sep, line[srch_id_col-1], sep, svml)
 
     if (not is_test) and line[book_col-1] == '1':
         weight = book_vs_click

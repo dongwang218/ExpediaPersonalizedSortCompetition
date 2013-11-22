@@ -1,3 +1,11 @@
+my approach:
+gbm basic without feature engineering works pretty good use most instances 6k trees close to 0.5 ndcg.
+lr with discretization with two ratio features and expected score of prop, ndcg is not that good.
+try to add expectation features and use gbm, very easy to overfit, so I used the leave one out randomized smoothed expectation, still a little overfit, can result is not that good.
+my best solution is train another gbm on gbm_basic and lr score, this get to 0.50525.
+
+lesson: downsample 0 label data, then can train more iteartions and get to 0.51 just using trees or gbm. then use many models and combine.
+
 hints:
 LambdaMART at 0.46, generating other features, add cross-features? 72nd
 11th place, use R with >16GB ram, feature engineering
@@ -324,13 +332,54 @@ leave one out, randomized expectation in amazon
 avg exp: 0.94, randomize is 0.2, 47 times. turns all NA into prior
 
 try gbm_basic.R, just the given features. 1m train, 3000 tree, test 1m get  0.4921711, leaderboard 0.49635, so I will train on more examples and run more trees. run 3 things
-  * 1m discretize.R, test 1m get 0.4945602, leaderboard 0.49498 submssision_gbm.ndcg.exp.no_cross.0.49498.with_prediction.csv. gbm.ndcg.exp.no_cross.0.49498.1m.all_prediction.Rdata
-  * heavy weight gbm_basic.R 4m, 10k tree, 1800 5:10, 1820 5:20 1900 6:02
-  * 1m gbm_basic.R test 1m get  0.4921711, leaderboard 0.49635 submssision_gbm.basic.0.49635.csv
-  * heavy weight discretize 4m, 10k tree, too slow killed
-  * heavy weight basic + only prop_id_exp + srch_destination_id_exp to avoid overfitting discretize_simple.R, 5:08 1460, 1480 5:20, 1560 6:02
-  * remove random_flag
+  * 1m discretize.R, 
+    3000        0.4700          0.4754     0.0050   -0.0000
+    test 1m get 0.4945602, leaderboard 0.49498 submssision_gbm.ndcg.exp.no_cross.0.49498.with_prediction.csv. gbm.ndcg.exp.no_cross.0.49498.1m.all_prediction.Rdata
 
+  * heavy weight gbm_basic.R 4m, 10k tree, 1800 5:10, 1820 5:20 1900 6:02 2380 9:50, too slow, 3m 3k tree, remove random
+     3k steps
+  3001        0.5000          0.5014     0.0050   -0.0000
+     [1] 0.4938143
+     leaderboard 0.49815 submssision_gbm.basic.noscore.heavy.csv.gz
+  4000        0.4984          0.5000     0.0050    0.0000
+    [1] 0.4954567
+    gbm.basic.3m3m0m1m.heavy.4k
+   7 hours to finish 1k
+   next run 5500
+  6500        0.4958          0.4983     0.0050   -0.0000
+   [1] 0.4972771
+
+  * 1m gbm_basic.R test 1m get  0.4921711, leaderboard 0.49635 submssision_gbm.basic.0.49635.csv.
+     1m discretize.R add drop_cnt at 10: 1m 1m 4m 1m
+     2000        0.1843          0.1836     0.0050   -0.0000
+     disc_cross_1m_1m_4m.2k
+     [1] 0.6373955 !
+     leaderboard 0.45276, give up on crossing stuff, bad prob due to removed randomize, so there is a drop in test, then a drop in leaderboard. (1-0.1843)-0.45276 is twice the drop from it to 0.6373955
+
+  * heavy weight discretize 4m, 10k tree, too slow killed
+
+  * heavy weight basic + only prop_id_exp + srch_destination_id_exp to avoid overfitting discretize_simple.R, 5:08 1460, 1480 5:20, 1560 6:02
+  3000        0.4680          0.4669     0.0050   -0.0000
+    [1] 0.4903269
+  4000        0.4566          0.4561     0.0050    0.0000
+    [1] 0.4917085
+  try it again, adding back random and make smoothing large
+  3000        0.4876          0.4899     0.0050    0.0000
+   [1] 0.4965579
+   not working, stop
+  * gbm_combine.R
+     combine lr and basic 4k version, switch validate and train
+    3000        0.4685          0.4683     0.0050    0.0000
+     [1] 0.5257798
+     leaderboard 0.50425
+    2000        0.4676          0.4691     0.0050    0.0000
+     [1] 0.5295704
+    leaderboard 0.50393
+    3500        0.4669          0.4685     0.0050   -0.0000
+    [1] 0.5300102
+    best.iter.ndcg
+    [1] 3328
+    leaderboard 0.50525, 57 place out of 356, if we run more might get to 15%
 
 rerun lr taking all data, try batch mode.
 #train
@@ -342,7 +391,7 @@ cat ../data/split_train.csv  | python tosvm.py 5 1 train action ../data/split_tr
 --test_file=/dev/stdin \
 --out_file=/dev/stdout | \
 sed -e 's/\t/ /' | \
- java -cp ~/ml-deploy.jar -Xmx100g -Xms1024m com.twitter.ml.util.BinLinTrainEval --trn_file=/dev/stdin --model=model.l2_batch_1000_40 --sigma_squared=1000 --num_iterations=40
+ java -cp ~/ml-deploy.jar -Xmx100g -Xms1024m com.twitter.ml.util.BinLinTrainEval --trn_file=/dev/stdin --model=model.l2_batch_1000_2000 --sigma_squared=1000 --num_iterations=2000
 #test
 cat ../data/split_test.csv  | python tosvm.py 1 1 train action ../data/split_train-prop_historical.csv |  java  -cp ~/ml-deploy.jar -Xmx20g -Xms1024m com.twitter.ml.util.BinLinTrainEval \
 --disc_model=mod.binary.disc_split_train_two_ratio_affinity_historical \
@@ -352,11 +401,23 @@ cat ../data/split_test.csv  | python tosvm.py 1 1 train action ../data/split_tra
 --test_file=/dev/stdin \
 --out_file=/dev/stdout | \
 sed -e 's/\t/ /' |
-java -cp ~/ml-deploy.jar com.twitter.ml.util.BinLinTrainEval --test_file=/dev/stdin --out_file=out.l2_batch_1000_40 --model=model.l2_batch_1000_40 --roc_file=roc.l2_batch_1000_40
-AUC :  0.684454
+java -cp ~/ml-deploy.jar com.twitter.ml.util.BinLinTrainEval --test_file=/dev/stdin --out_file=out.l2_batch_1000_2000 --model=model.l2_batch_1000_2000 --roc_file=roc.l2_batch_1000_2000
+AUC :  0.684454 40 iterations
+auc: 0.687117 1k iterations
+#       AUC     0.687080 2k iterations
 avg ndcg 0.478114, num srch 79891
+avg ndcg 0.483467, num srch 79891 1k
+avg ndcg 0.483417, num srch 79891 2k not worth it
 # produce prediction for every one
-try 1k iterations
+cat ../data/test.csv | python tosvm.py 1 1 test noaction ../data/split_train-prop_historical.csv |  java  -cp ~/ml-deploy.jar -Xmx20g -Xms1024m com.twitter.ml.util.BinLinTrainEval \
+--disc_model=mod.binary.disc_split_train_two_ratio_affinity_historical \
+--tst_field=1 \
+--disc_substitute \
+--disc_no_label \
+--test_file=/dev/stdin \
+--out_file=/dev/stdout | \
+sed -e 's/\t/ /' |
+java -cp ~/ml-deploy.jar com.twitter.ml.util.BinLinTrainEval --test_file=/dev/stdin --out_file=out.l2_batch_1000_1000-alltest --model=model.l2_batch_1000_1000 --roc_file=/dev/null
 
 
 try svdfeature
@@ -369,3 +430,37 @@ data_p <- data.frame("srch_id" = data$srch_id, "prop_id" = data$prop_id, "split"
 save(data_p, file="../data/gbm.ndcg.exp.no_cross.0.49498.1m.all_prediction.RData")
 
 what if we drop combination features that less than a threshold, but get rid of the randomization. drop random_flag, make date_time into weekly. try 1m feature
+
+try svmrank
+head -1000000 ../data/split_train.csv  | python tosvm.py 1 1 train action ../data/split_train-prop_historical.csv regression srch_id |  java  -cp ~/ml-deploy.jar -Xmx20g -Xms1024m com.twitter.ml.util.BinLinTrainEval \
+--disc_model=mod.binary.disc_split_train_two_ratio_affinity_historical \
+--tst_field=2 \
+--disc_substitute \
+--disc_no_label \
+--test_file=/dev/stdin \
+--out_file=/dev/stdout | \
+ruby -e 'while gets; a = chomp.split("\t"); t = a[0]; srch_id = a[1]; sl = a[2].split(" ").map {|x| y = x.split(":"); k=y[0].to_i; v=y[1].to_f; [k,v]; }.sort{|x,y| x[0]<=>y[0]}.map{|x| x[0].to_s+":"+x[1].to_s}.join(" "); puts "#{t} qid:#{srch_id} #{sl}"; end' > ../data/split_train_svmrank.dat
+ cut -d' ' -f2 ../data/split_train_svmrank.dat | sort -u | wc -l
+# -c above/100
+~/svm_rank_learn -c 400 ../data/split_train_svmrank.dat ../Models/mod.svmrank.dat
+~/svm_rank_classify ../data/split_test_svmrank.dat ../Models/mod.svmrank.dat ../Submissions/svmrank.predictions
+  # 82.31%
+~/svm_rank_learn -t 2 -g 1 -c 400 ../data/split_train_svmrank.dat ../Models/mod.svmrank.rbf1.dat
+avg ndcg 0.364099, num srch 79891
+bad
+
+try ordinal regression:
+cat ../data/split_train_svmrank.dat | ruby -e 'while gets; a = chomp.split(" "); l = a[0].to_i; l = (l == 0 ? 1 : (l == 1 ? 2 : 3)); puts ([l] + a[2..a.size]).join(" "); end' | \
+java  -cp ~/ml-deploy-new.jar -Xmx40g -Xms1024m com.twitter.ml.util.LROrdinalClassifierTrainEval --trn_file=/dev/stdin --model=mod.sgd.binary.split_train_two_ratio_affinity-action_historical-ordinal --decay=2 --lambda=0.001 --tune_delta --pegasos --num_iterations=1 --num_features=630 --trainable_bias --shuffle --class_count=3
+# test
+cat ../data/split_test_svmrank.dat | ruby -e 'while gets; a = chomp.split(" "); l = a[0].to_i; l = (l == 0 ? 1 : (l == 1 ? 2 : 3)); puts ([l] + a[2..a.size]).join(" "); end' | \
+java  -cp ~/ml-deploy-new.jar -Xmx10g -Xms1024m com.twitter.ml.util.LROrdinalClassifierTrainEval --test_file=/dev/stdin --model=mod.sgd.binary.split_train_two_ratio_affinity-action_historical-ordinal --out_file=out.sgd.ordinal-test --roc_file=roc.sgd.ordinal-test --class_count=3
+
+many thing to do:
+* study why validation for discretize.R is good, but real ndcg is bad
+* see if we can use cv for gbm
+* look at gbm code esp validate deviance, why it is not 1-ndcg
+
+best for me: lr batch 1k iterations with ratio and expected feature
+             gbm basic without any expectation features
+             combine using gbm_combine.R
